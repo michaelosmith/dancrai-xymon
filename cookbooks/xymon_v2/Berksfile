@@ -1,0 +1,7 @@
+# frozen_string_literal: true
+source 'https://supermarket.chef.io'
+
+cookbook 'chef-client', '~> 10.0.1'
+cookbook 'selinux', '~> 2.1.0'
+
+metadata

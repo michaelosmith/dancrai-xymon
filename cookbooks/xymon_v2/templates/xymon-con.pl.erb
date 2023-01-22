@@ -1,0 +1,74 @@
+#!/usr/bin/perl -w
+
+$ENV{PERL_LWP_SSL_VERIFY_HOSTNAME} = 0;
+BEGIN {
+	unshift ( @INC, "/usr/lib/vmware-vcli/apps/" );
+}
+use strict;
+use warnings;
+use FindBin;
+use VMware::VIRuntime;
+use VMware::VICredStore;
+use AppUtil::HostUtil;
+use AppUtil::VMUtil;
+Opts::parse();
+my $line;
+my $test = "vmcon";
+my $host_address = GetSetting('ESXHOST','/etc/xymon.esx','127.0.0.1');
+my $user = GetSetting('ESXUSER','/etc/xymon.esx','127.0.0.1');
+my $cred_password = GetSetting('ESXPASS','/etc/xymon.esx','127.0.0.1');
+my $xymon_server = GetSetting('XYMONSERVERS','/etc/sysconfig/xymon-client','broken');
+$xymon_server =~ s/"//g;
+my $esx_hostname = GetSetting('CLIENTHOSTNAME','/etc/sysconfig/xymon-client','broken');
+$esx_hostname =~ s/"//g;
+use Env qw(BB);
+$cred_password =~ s/"//g;
+Util::connect("https://" . $host_address, $user, $cred_password);
+my $vm_views = Vim::find_entity_views(view_type => 'VirtualMachine', properties => ['name','runtime']);
+my @needed = ();
+my $local_time = localtime();
+foreach my $vm (@$vm_views) {
+	my $consolidation_needed = $vm->runtime->consolidationNeeded;
+	my $vmname = $vm->name;
+	if($consolidation_needed eq "1") {
+		unless(grep(/$vmname/, @needed)) {
+			push(@needed, $vmname);
+		}
+	}
+}
+if(@needed){
+	my $count = $#needed+1;
+	my $message;
+	foreach (@needed){
+		$message .= $_ . ", ";
+	}
+	$message =~ s/..$//;
+	$line="status $esx_hostname.$test red $local_time [$esx_hostname]\n&red $count VM(s) need disk consolidation:\n&red $message";
+} else {
+	$line="status $esx_hostname.$test green $local_time [$esx_hostname]\n&green OK - no VMs need disk consolidation\n";
+}
+
+my @xymon_servers = $xymon_server =~ m{\S+}gso;
+
+for (my $i = 0; $i < @xymon_servers; $i++) {
+	system("$BB $xymon_servers[$i] \"$line\"");
+}
+
+sub GetSetting
+{
+	my ($cfg_value,$cfg_filename,$cfg_default)=@_;
+	open(CFGFILE,"<$cfg_filename") or die "Can't open configuration file $cfg_filename.";
+	my @cf=<CFGFILE>;
+	my $cfg_line;
+	foreach $cfg_line (@cf)
+	{
+		if (index($cfg_line,"#")==0) { next; } # Lines starting with a hash mark are comments
+		my @ln=split("=",$cfg_line,2);
+		if ($ln[0] =~ /$cfg_value/i) {
+			chomp $ln[1];
+			return $ln[1];
+		}
+	}
+	close CFGFILE;
+	return $cfg_default; # Return default if we can't find the value
+}

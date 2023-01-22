@@ -1,0 +1,190 @@
+#!/bin/sh
+
+convertsecs() {
+ ((h=${1}/3600))
+ ((m=(${1}%3600)/60))
+ printf "%02d hrs, %02d mins\n" $h $m
+}
+
+# xymon-vmsnap.sh
+#
+# Xymon - VMSNAP - WATCH THE VM SNAPSHOTS
+# Jonathan Trott - Dancrai
+#
+# All Rights Reserved
+#
+# Written by: Jonathan Trott
+# Email: jtrott@dancrai.com
+# Date: 20120328
+#
+# v1.0 : Initial version - Jonathan Trott <jtrott@dancrai.com>
+# v1.1 : Fixed timezone and added variables for VMSNAPREDTIME and VMSNAPYELLOWTIME - Jonathan Trott <jtrott@dancrai.com>
+#
+#####################################################
+# INSTALL NOTES
+#####################################################
+# 1. copy xymon-vmsnap.sh in your $XYMONCLIENTHOME/ext directory
+# 2. make it executable : chmod 755 xymon-vmsnap.sh
+# 3. create an entry in your $XYMONCLIENTHOME/etc/clientlaunch.cfg
+#
+#    [vmsnap]
+#	ENVFILE $XYMONCLIENTHOME/etc/xymonclient.cfg
+#	CMD $XYMONCLIENTHOME/ext/xymon-vmsnap.sh
+#	LOGFILE $XYMONCLIENTHOME/logs/xymon-vmsnap.log
+#	INTERVAL 5m
+#
+# 4. restart Xymon client
+#####################################################
+#
+# Import configuration
+. /etc/xymon.esx
+. /etc/sysconfig/xymon-client
+
+# Age in hours for a snapshot before red dot is displayed
+VMSNAPREDTIME=$(( $VMSNAPREDTIME * 3600 ))
+
+# Age in hours for a snapshot before yellow dot is displayed
+VMSNAPYELLOWTIME=$(( $VMSNAPYELLOWTIME * 3600 ))
+
+VERSION="1.1"
+
+/usr/lib/vmware-vcli/apps/vm/snapshotmanager.pl --url https://$ESXHOST:443/sdk --username=$ESXUSER --password="$ESXPASS" --operation list > /tmp/snapshots
+TEST="vmsnap"                            # THE NAME OF OUR TEST (displayed in BB table)
+
+if test "$XYMONCLIENTHOME" = ""
+then
+        echo "XYMONCLIENTHOME is not set... exiting"
+        exit 1
+fi
+
+if test ! "$BBTMP"                      # GET DEFINITIONS IF NEEDED
+then
+         # echo "*** LOADING BBDEF ***"
+        . $XYMONCLIENTHOME/etc/bbdef.sh          # INCLUDE STANDARD DEFINITIONS
+fi
+
+#
+# XYMON COLOUR
+#
+
+# Set the initial colour of the test
+COLOUR="green"
+# Grab the current time
+CURTIME=`/bin/date --utc +%s`
+
+# Initialise database
+rm /tmp/snapshots.db
+sqlite3 /tmp/snapshots.db "create table snapshots (server TEXT, name TEXT, timestamp INTEGER, state TEXT, quiesced TEXT);"
+
+# Loop through each line
+while IFS='' read LINE; do
+	# If the line doesn't start with "No"
+	if [[ $LINE != *"No Snapshot "* ]]; then
+		# If this line contains a server name
+		echo "$LINE" | grep "exists under host"
+		if [[ $LINE == *" under host "* ]]; then
+			# Store the server name in a variable
+			SERVERNAME=$LINE
+			SERVERNAME=${SERVERNAME##**Virtual Machine }
+			SERVERNAME=${SERVERNAME%% under host*}
+		# Else If this line is a snapshot line
+		elif [[ "${LINE:0:1}" == [[:space:]] ]]; then
+			# If the server name doesn't contain replica
+			if [[ $SERVERNAME != *"replica"* ]]; then
+				if [[ $SERVERNAME != *"_test"* ]]; then
+					# Extract the name
+					SNAPSHOTNAME=`echo "$LINE" | sed 's/ \+ /\t/g' | cut -f 2`
+					# Extract the date
+					TIMESTAMP=`echo "$LINE" | sed 's/ \+ /\t/g' | cut -f 3 | cut -d" " -f 1`
+					SNAPTIME=`/bin/date --utc --date ${TIMESTAMP/T/UTC} +%s`
+					# Extract the state
+					STATE=`echo "$LINE" | sed 's/ \+ /\t/g' | cut -f 3 | cut -d" " -f 2`
+					# Extract the quiesced
+					QUIESCED=`echo "$LINE" | sed 's/ \+ /\t/g' | cut -f 3 | cut -d" " -f 3`
+					# Store the line into the database
+					sqlite3 /tmp/snapshots.db  "insert into snapshots (server,name,timestamp,state,quiesced) values ('$SERVERNAME','$SNAPSHOTNAME','$SNAPTIME','$STATE','$QUIESCED');"
+				# End if
+				fi
+			# End if
+			fi
+		# End If
+		fi
+	# End if
+	fi
+# End Loop
+done < /tmp/snapshots
+
+SNAPCOUNT=`sqlite3 /tmp/snapshots.db "select count(*) from snapshots order by timestamp;"`
+
+SNAPOUTPUT=""
+
+SNAPTEXT="Host contains no snapshots"
+
+if [ $SNAPCOUNT -gt 0 ]
+then
+	SNAPOUTPUT="<style type=\"text/css\">
+table.snap, table.snap td {border: 1px solid white;border-collapse: collapse;}
+table.snap td {padding: 3px;}
+</style><table class=\"snap\"><tbody><tr><td>Status</td><td>Server</td><td>Snapshot Name</td><td>Snapshot Time</td><td>Snapshot Age</td><td>State</td><td>Quiesced</td></tr>"
+	if [ $SNAPCOUNT == 1 ]
+	then
+		# Set the text
+		SNAPTEXT="Host contains 1 snapshot"
+	else
+		SNAPTEXT="Host contains $SNAPCOUNT snapshots"
+	fi
+	for i in $(seq 1 $SNAPCOUNT); do
+		# Set the SQL offset values
+		OFF=$(( $i - 1 ))
+		# Retrieve the variables
+		SERVERNAME=`sqlite3 /tmp/snapshots.db "select server from snapshots order by timestamp limit 1 offset $OFF;"`
+		SNAPSHOTNAME=`sqlite3 /tmp/snapshots.db "select name from snapshots order by timestamp limit 1 offset $OFF;"`
+		SNAPTIME=`sqlite3 /tmp/snapshots.db "select timestamp from snapshots order by timestamp limit 1 offset $OFF;"`
+		SNAPSHOTTIME=`/bin/date --date="@$SNAPTIME"`
+		STATE=`sqlite3 /tmp/snapshots.db "select state from snapshots order by timestamp limit 1 offset $OFF;"`
+		QUIESCED=`sqlite3 /tmp/snapshots.db "select quiesced from snapshots order by timestamp limit 1 offset $OFF;"`
+		# Calculate the time difference in seconds
+		let TIMEDIFF="$CURTIME-$SNAPTIME"
+		# If difference is more than the red time
+		if [ $TIMEDIFF -gt $VMSNAPREDTIME ]
+		then
+			# Set the colour to red
+			COLOUR="$COLOUR red"
+			COLOURICON="<img src="gifs/red.gif" alt="red" height="16" border="0" width="16">"
+		# else if the time difference is greater than the yellow time
+		elif [ $TIMEDIFF -gt $VMSNAPYELLOWTIME ]
+		then
+			# Set the colour to yellow
+			COLOUR="$COLOUR yellow"
+			COLOURICON="<img src="gifs/yellow.gif" alt="yellow" height="16" border="0" width="16">"
+		else
+			# Set the colour to green
+			COLOUR="$COLOUR green"
+			COLOURICON="<img src="gifs/green.gif" alt="green" height="16" border="0" width="16">"
+		fi
+		SNAPAGE=$(convertsecs $TIMEDIFF)
+		SNAPOUTPUT="$SNAPOUTPUT<tr><td>$COLOURICON</td><td>$SERVERNAME</td><td>$SNAPSHOTNAME</td><td>$SNAPSHOTTIME</td><td>$SNAPAGE</td><td>$STATE</td><td>$QUIESCED</td></tr>"
+	done
+	SNAPOUTPUT="$SNAPOUTPUT</tbody></table>"
+fi
+
+# Fix up colour
+if [[ $COLOUR == *"red"* ]]
+then
+	COLOUR="red"
+elif [[ $COLOUR == *"yellow"* ]]
+then
+	COLOUR="yellow"
+else
+	COLOUR="green"
+fi
+
+# FORMAT IT PROPERLY FOR XYMON...
+LINE="status $CLIENTHOSTNAME.$TEST $COLOUR `date`
+&$COLOUR $SNAPTEXT<br />
+$SNAPOUTPUT
+`cat /tmp/snapshots`"
+
+# SEND THE DATA ACROSS
+#echo $BB $XYMSRV "$LINE"               # SEND IT TO STDOUT (FOR DEBUGING)
+$BB $XYMSRV "$LINE"                     # SEND IT TO BBDISPLAY

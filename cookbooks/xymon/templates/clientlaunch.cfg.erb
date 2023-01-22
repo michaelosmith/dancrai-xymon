@@ -1,0 +1,25 @@
+[client]
+        ENVFILE $XYMONCLIENTHOME/etc/xymonclient.cfg
+        CMD $XYMONCLIENTHOME/bin/xymonclient.sh
+        LOGFILE $XYMONCLIENTLOGS/xymonclient.log
+        INTERVAL 5m
+[vmcon]
+        ENVFILE $XYMONCLIENTHOME/etc/xymonclient.cfg
+        CMD $XYMONCLIENTHOME/ext/xymon-con.pl
+        LOGFILE $XYMONCLIENTHOME/logs/xymon-con.log
+        INTERVAL 5m
+[vmsnap]
+        ENVFILE $XYMONCLIENTHOME/etc/xymonclient.cfg
+        CMD $XYMONCLIENTHOME/ext/xymon-vmsnap.sh
+        LOGFILE $XYMONCLIENTHOME/logs/xymon-vmsnap.log
+        INTERVAL 5m
+[vmtemp]
+        ENVFILE $XYMONCLIENTHOME/etc/xymonclient.cfg
+        CMD $XYMONCLIENTHOME/ext/xymon-vmtemp.sh
+        LOGFILE $XYMONCLIENTHOME/logs/xymon-vmtemp.log
+        INTERVAL 5m
+[vmhealth]
+        ENVFILE $XYMONCLIENTHOME/etc/xymonclient.cfg
+        CMD $XYMONCLIENTHOME/ext/xymon-vmhealth.sh
+        LOGFILE $XYMONCLIENTHOME/logs/xymon-vmhealth.log
+        INTERVAL 5m

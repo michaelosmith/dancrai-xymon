@@ -1,0 +1,28 @@
+#!/bin/sh
+. /etc/xymon.esx
+. /etc/sysconfig/xymon-client
+
+TEST=vmhealth
+COLOUR=green
+
+VMHEALTH=`/usr/bin/python /etc/xymon-client/ext/xymon-vmhealth.py -H $ESXHOST -U $ESXUSER -P $ESXPASS -i "Remote Management Device 0 NetStat: Connected"`
+VMHEALTHRESULT=$?
+
+if [ $VMHEALTHRESULT == 0 ]
+then
+	COLOUR=green
+elif [ $VMHEALTHRESULT == 1 ]
+then
+	COLOUR=yellow
+else
+	COLOUR=red
+fi
+
+VMHEALTH=${VMHEALTH//CRITICAL/&red}
+VMHEALTH=${VMHEALTH//WARNING/&yellow}
+LINE="status $CLIENTHOSTNAME.$TEST $COLOUR `date`
+&$COLOUR $VMHEALTH"
+
+# SEND THE DATA ACROSS
+# echo $BB $XYMSRV "$LINE"               # SEND IT TO STDOUT (FOR DEBUGING)
+$BB $XYMSRV "$LINE"                     # SEND IT TO BBDISPLAY

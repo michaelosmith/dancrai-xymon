@@ -1,0 +1,29 @@
+#!/bin/sh
+. /etc/xymon.esx
+. /etc/sysconfig/xymon-client
+
+TEST=vmtemp
+COLOUR=green
+
+ESXTEMP=`/usr/bin/wbemcli -cte -nl ei -noverify "https://$ESXUSER:$ESXPASS@$ESXHOST/root/cimv2:CIM_NumericSensor" | grep "\-Name\|\-CurrentReading" | grep -i -A1 "Inlet Temp\|Ambient Temp\|Inlet ambient\|Chunnel In\|BB Vtt 1 Temp\|Baseboard Temp\|Front Panel" | tail -1 | cut -d"=" -f 2`
+
+if [ -z "$ESXTEMP" ]
+then
+	exit 0
+fi
+
+ESXTEMP=`echo $ESXTEMP/100 | bc`
+if [ "$ESXTEMP" -gt "$REDTEMP" ]
+then
+	COLOUR=red
+elif [ "$ESXTEMP" -gt "$YELLOWTEMP" ]
+then
+	COLOUR=yellow
+fi
+
+LINE="status $CLIENTHOSTNAME.$TEST $COLOUR `date`
+&$COLOUR Inlet Temp = $ESXTEMP"
+
+# SEND THE DATA ACROSS
+#echo $BB $XYMSRV "$LINE"               # SEND IT TO STDOUT (FOR DEBUGING)
+$BB $XYMSRV "$LINE"                     # SEND IT TO BBDISPLAY

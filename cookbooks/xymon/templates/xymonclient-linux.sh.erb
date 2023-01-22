@@ -1,0 +1,80 @@
+#!/bin/sh
+#----------------------------------------------------------------------------#
+# Linux client for Hobbit                                                    #
+#                                                                            #
+# Copyright (C) 2005-2008 Henrik Storner <henrik@hswn.dk>                    #
+#                                                                            #
+# This program is released under the GNU General Public License (GPL),       #
+# version 2. See the file "COPYING" for details.                             #
+#                                                                            #
+#----------------------------------------------------------------------------#
+#
+# $Id$
+. /etc/xymon.esx
+/usr/lib/vmware-vcli/apps/general/viversion.pl --url https://$ESXHOST:443/sdk --username=$ESXUSER --password="$ESXPASS" > /tmp/viversion
+/usr/lib/vmware-vcli/apps/host/hostinfo.pl --url https://$ESXHOST:443/sdk --username=$ESXUSER --password="$ESXPASS" > /tmp/hostinfo
+/usr/lib/vmware-vcli/apps/vm/vminfo.pl --url https://$ESXHOST:443/sdk --username=$ESXUSER --password="$ESXPASS" > /tmp/vminfo
+/usr/lib/vmware-vcli/apps/host/dsbrowse.pl  --url https://$ESXHOST:443/sdk --username=$ESXUSER --password="$ESXPASS" > /tmp/dsbrowse
+echo "[date]"
+date
+echo "[uname]"
+uname -rsmn
+echo "[osversion]"
+cat /tmp/viversion | grep build
+echo "[uptime]"
+BOOTTIME=`cat /tmp/hostinfo | \
+grep BootTime | \
+awk -F" " '{print $2}'`
+CURRTIME=`date +%H:%M:%S`
+BOOTTIME=`echo "$BOOTTIME" | cut -f 1 -d "."`
+BOOTTIMES=`date --date $BOOTTIME --utc +%s`
+CURRENTTIMES=`date --utc +%s`
+UPTIMES=$(( $CURRENTTIMES - $BOOTTIMES ))
+BOOTd=$(( $UPTIMES/ 86400 ))
+BOOTh=$(( ( $UPTIMES/ 3600 ) % 24 ))
+BOOTm=$(( ( $UPTIMES/ 60 ) % 60 ))
+HOSTCOUNT=`cat /tmp/vminfo | grep "^Name:" | wc -l`
+SLEEPINGHOSTCOUNT=`cat /tmp/vminfo | grep "^Cpu usage:" | grep "Not Known" | wc -l`
+RUNNINGHOSTCOUNT=`cat /tmp/vminfo | grep "^Cpu usage:" | grep -v "Not Known" | wc -l`
+CPUTOTAL=`cat /tmp/hostinfo | grep "^Cpu Speed:" | awk '{print $NF}'`
+CPUUSAGE=`cat /tmp/hostinfo | grep "^Cpu Usage:" | awk '{print $NF}'`
+CPUUSAGE=$(( $CPUUSAGE * 1024 * 1024 ))
+CPULOAD=`echo "scale=2; $CPUUSAGE/$CPUTOTAL" | bc`
+echo "top - $CURRTIME up $BOOTd days, $BOOTh:$BOOTm, $HOSTCOUNT users, load average: 0$CPULOAD 0$CPULOAD 0$CPULOAD"
+echo "[who]"
+cat /tmp/vminfo | grep ^Name: | sed 's/Name:\t\t //'
+echo "[df]"
+cat /tmp/dsbrowse | \
+egrep -e "Name" -e "Location" -e "Maximum Capacity" -e "Available space" | \
+tr "\n" "\t" | \
+sed 's/ Name             : /\n\t/g'  | \
+sed 's/ Location         : /\t/g' | \
+sed 's/ Maximum Capacity : /\t/g' | \
+sed 's/ Available space  : /\t/g' | \
+sed '$a\' | \
+sed '1d' | \
+sed 's/ GB//g' | \
+awk -F"\t" 'BEGIN {OFS = "\t"}; {print $4,int($6)*1024,int($6),int($8),int(($6-$8)*100/$6)"%","/"gensub(/ /,"_","g",$2)}' | \
+sed '1i\Filesystem\t1024-blocks\tUsed\tAvailable\tCapacity\tMounted on' | \
+sed 's/\t/    /g'
+echo "[free]"
+cat /tmp/hostinfo | \
+grep "Memory" | \
+tr "\n" "\t" | \
+unexpand -a | \
+sed 's/\t /\t/g' | \
+sed 's/ \t/\t/g' | \
+sed 's/\t\t/\t/g' | \
+sed 's/\t\t/\t/g' | \
+sed 's/Physical Memory:\t//' | \
+sed 's/\tMemory Usage://' | \
+sed 's/ bytes//' | \
+sed 's/MB\t//' | \
+awk 'BEGIN {OFS = "\t"}; {print "Mem:",$1/1024,$2*1024,($1/1024)-$2*1024,"0","0","0"}' | \
+sed '1i\             total       used       free' | \
+sed '$a\-/+ buffers/cache:     0        0' | \
+sed '$a\Swap:        0        0       0'
+echo "[top]"
+cat /tmp/hostinfo
+cat /tmp/vminfo
+exit
